@@ -115,15 +115,11 @@ for line in data_scores:
 """
 Filter out relevant scores & transform into highscores
 """
-display_scores = list(filter(lambda x : 'Objective' in x and x['Objective'] in ['pk.disp.minutes', 'pk.disp.seconds'], objects))
+highscores = list(filter(lambda x : 'Objective' in x and x['Objective'] in ['pk.res_current'], objects))
 
+scores = list(map(lambda s : { "name": s['Name'], "min": s['Score'] // 60, "sec": s['Score'] % 60, "total": s['Score'] }, highscores))
 
-key_names = list(set(map(lambda x : x['Name'], display_scores)))
-
-#scores = list(map(lambda name : "{}: {}m {}s".format(name, search(display_scores, lambda x:x['Name']==name and x['Objective']=='pk.disp.minutes')['Score'], search(display_scores, lambda x:x['Name']==name and x['Objective']=='pk.disp.seconds')['Score']), key_names))
-scores = list(map(lambda name : { "name": name, "min": search(display_scores, lambda x:x['Name']==name and x['Objective']=='pk.disp.minutes')['Score'], "sec": search(display_scores, lambda x:x['Name']==name and x['Objective']=='pk.disp.seconds')['Score'] }, key_names))
-
-scores.sort(key=lambda x : x['min']*60+x['sec'])
+scores.sort(key=lambda x : x['total'])
 
 #print(scores)
 
