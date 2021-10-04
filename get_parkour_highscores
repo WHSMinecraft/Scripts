@@ -1,0 +1,170 @@
+#!/usr/bin/env python
+
+from argparse import ArgumentParser, ArgumentTypeError
+from subprocess import Popen, PIPE
+from string import Template
+
+
+def search(l, f):
+    for x in l:
+        if f(x):
+            return x
+    return None
+
+def indent_lvl(s):
+    return len(s) - len(s.lstrip())
+
+class Coords:
+    x = 0
+    y = 0
+    z = 0
+    def __init__(self, string):
+        if not string:
+            raise ArgumentTypeError('No value specified')
+        arr = string.split(',')
+        if len(arr) != 3 or not all(arr):
+            raise ArgumentTypeError('Three values required')
+        
+        self.x = int(arr[0])
+        self.y = int(arr[1])
+        self.z = int(arr[2])
+
+    def __str__(self):
+        return "Coords(x={}, y={}, z={})".format(self.x, self.y, self.z)
+
+
+
+parser = ArgumentParser(description="Print current best scores in the spawn hub parkour.")
+parser.add_argument('--scoreboard_file', '-f', '--file', help='Path of scoreboard.dat to read', default='/srv/minecraft/survival/world/data/scoreboard.dat')
+
+subparsers = parser.add_subparsers(title='Actions', dest='action', required=True)
+parser_list = subparsers.add_parser('list', help='Print a list of highscores')
+parser_list.add_argument('--amount', type=int, default=9, required=False, help='Print first N scores. Useful for an overview.')
+
+parser_setblock = subparsers.add_parser('setblock', help='Print setblock commands to create a physical scoreboard. Signs will fill the board in row-major order.')
+parser_setblock.add_argument('--width', type=int, default=3, required=False, help='Width of scoreboard')
+parser_setblock.add_argument('--height', type=int, default=3, required=False, help='Height of scoreboard')
+parser_setblock.add_argument('--facing', type=str, required=True, choices=['north', 'east', 'south', 'west'], help='Direction of scoreboard signs')
+parser_setblock.add_argument('--start', type=Coords, required=True, help='Top left starting position. Specify coords of the sign, not the wall behind it. Example: --start 36,71,-21')
+
+args = parser.parse_args()
+
+
+
+"""
+Get nbt scoreboard as string data
+"""
+
+process = Popen(['nbted', '--print', args.scoreboard_file], stdout=PIPE, stderr=PIPE)
+stdout, stderr = process.communicate()
+
+data_file = stdout.decode('utf-8')
+
+#print(data_file)
+
+
+
+"""
+Parse raw score data
+"""
+indentation = 0
+in_block = False
+data_scores = []
+for line in data_file.split('\n'):
+    if in_block:
+        if indentation is not indent_lvl(line):
+            break
+
+        data_scores.append(line)
+
+    if 'List "PlayerScores" Compound' in line:
+        indentation = indent_lvl(line) + 2
+        in_block = True
+
+
+objects = []
+cur_obj = {}
+for line in data_scores:
+    if 'End' in line:
+        objects.append(cur_obj)
+        cur_obj = {}
+        continue
+
+    elms = line.lstrip().split(' ')
+    t = elms[0]
+    n = elms[1]
+    v = elms[2]
+
+    name = n[1:-1]
+    if t == 'Int':
+        value = int(v)
+    if t == 'Byte':
+        value = int(v)
+    if t == 'String':
+        value = v[1:-1]
+
+    cur_obj[name] = value
+
+#print(objects)
+
+
+
+"""
+Filter out relevant scores & transform into highscores
+"""
+display_scores = list(filter(lambda x : 'Objective' in x and x['Objective'] in ['pk.disp.minutes', 'pk.disp.seconds'], objects))
+
+
+key_names = list(set(map(lambda x : x['Name'], display_scores)))
+
+#scores = list(map(lambda name : "{}: {}m {}s".format(name, search(display_scores, lambda x:x['Name']==name and x['Objective']=='pk.disp.minutes')['Score'], search(display_scores, lambda x:x['Name']==name and x['Objective']=='pk.disp.seconds')['Score']), key_names))
+scores = list(map(lambda name : { "name": name, "min": search(display_scores, lambda x:x['Name']==name and x['Objective']=='pk.disp.minutes')['Score'], "sec": search(display_scores, lambda x:x['Name']==name and x['Objective']=='pk.disp.seconds')['Score'] }, key_names))
+
+scores.sort(key=lambda x : x['min']*60+x['sec'])
+
+#print(scores)
+
+
+
+if (args.action == 'list'):
+    """
+    Just print a overview
+    """
+    hall_of_fame = scores[:args.amount]
+    for i, score in enumerate(hall_of_fame):
+        rank = i + 1
+        print("#{} {:<20} {:>5}m {:>2}s".format(rank, score['name'], score['min'], score['sec']))
+elif (args.action == 'setblock'):
+    """
+    Convert to physical scoreboard
+    """
+    width = args.width
+    height = args.height
+    scores_to_display = width*height
+    hall_of_fame = scores[:scores_to_display]
+
+
+    for i, score in enumerate(hall_of_fame):
+        rank = i + 1
+        Text2 = "#{} {}".format(rank, score["name"])
+        Text2 = Text2[:15] # Max width of signs
+        Text3 = "{}m {}s".format(score["min"], score["sec"])
+
+        row = i // width
+        col = i % width
+        if args.facing == 'north':
+            block = (args.start.x-col, args.start.y-row, args.start.z)
+        elif args.facing == 'east':
+            block = (args.start.x, args.start.y-row, args.start.z-col)
+        elif args.facing == 'south':
+            block = (args.start.x+col, args.start.y-row, args.start.z)
+        elif args.facing == 'west':
+            block = (args.start.x, args.start.y-row, args.start.z+col)
+
+        # Required to avoid '/setblock destroy'
+        cmd1 = Template('setblock $x $y $z minecraft:air').substitute(x=block[0], y=block[1], z=block[2])
+        cmd2 = Template('setblock $x $y $z minecraft:dark_oak_wall_sign[facing=$facing]{Text2:\'{"color":"yellow","text":"$Text2"}\',Text3:\'{"color":"yellow","text":"$Text3"}\'}').substitute(x=block[0], y=block[1], z=block[2], facing=args.facing, Text2=Text2, Text3=Text3)
+        print(cmd1)
+        print(cmd2)
+
+
