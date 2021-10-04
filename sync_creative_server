@@ -1,0 +1,17 @@
+#!/bin/bash
+set -e
+
+echo Der Creative-Server wird gestoppt und mit dem Stand des Survival-Servers überschrieben.
+read -p "Continue (y/n)?" choice
+case "$choice" in 
+	y|Y ) echo "yes";;
+	n|N ) echo "no";;
+	* ) echo "invalid";;
+esac
+
+sudo systemctl stop minecraft@creative
+echo save-all flush > /run/minecraft-survival.stdin
+rm -rf /srv/minecraft/creative/world*
+rsync -rlh /srv/minecraft/survival/world* /srv/minecraft/creative/
+sudo systemctl start minecraft@creative
+echo Done!
